@@ -1,0 +1,8 @@
+/data/account/*
+/build/
+/logs/
+
+/src/debug/
+test.*
+
+/node_modules/
