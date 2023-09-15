@@ -1,9 +1,9 @@
 {
   /* Number - QQ_Uin */
-  "account": 209858268,
+  "account": 123456,
 
   /* String - Password */
-  "password": "Akio19920614",
+  "password": "password",
 
   /* Number - Platform
   *  1 —— Android      | 4 —— iMac
@@ -16,5 +16,5 @@
   "alwaysLogin": false,
 
   /* String - SignApi (See: https://qsign.dev/) */
-  "signApi": "http://qq.wxfsq.com/sign"
+  "signApi": "SignApi"
 }
