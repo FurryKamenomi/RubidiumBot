@@ -47,7 +47,7 @@ interface CpluginRouter {
   on(event: 'private.command.request', callback: (prototype: icqq.PrivateMessageEvent, command: string, argument?: unknown[]) => void): this
 
   on(event: 'group.self.nickname', callback: (val: { event_id: number, group_id: number, user_id: number, new_nickname: string }) => void): this;
-  on(event: string, callback: (prototype: icqq.GroupMessageEvent, argument?: unknown[]) => void): this
+  on(event: string, callback: (prototype: never, argument?: never[]) => void): this
 }
 
 class CpluginRouter extends events.EventEmitter {
@@ -68,6 +68,10 @@ class CpluginRouter extends events.EventEmitter {
 
   get pm() {
     return <Readonly<typeof _pluginMap>>_pluginMap
+  }
+
+  get cl() {
+    return <Readonly<typeof this._client>>this._client;
   }
 
 
@@ -317,6 +321,30 @@ export type TCommandInfomation<T extends 'group' | 'private'> = {
 }
 
 
+
+declare interface CpluginTemplate {
+  /**
+   * RegisterGroupCommand
+   * 
+   * @protected
+   */
+  RegisterGroupCommand(cmd: string, options?: TCommandOption): string;
+
+  /**
+   * RegisterPrivateCommand
+   * 
+   * @protected
+   */
+  RegisterPrivateCommand(cmd: string, options?: TCommandOption): string;
+
+  /**
+   * BindMessageOnce
+   * 
+   * @protected
+   */
+  BindMessageOnce<T extends 'message.group' | 'message.private'>(event: T, target_id: number, listener: icqq.EventMap[T]): () => boolean | void;
+}
+
 /**
  * @class
  * @abstract
@@ -345,7 +373,7 @@ class CpluginTemplate {
 
 
 
-  protected RegisterGroupCommand(cmd: string, options?: TCommandOption): string {
+  public RegisterGroupCommand(cmd: string, options?: TCommandOption): string {
     let isRegexp = false;
     try {
       isRegexp = !!(new RegExp(cmd))
@@ -369,7 +397,7 @@ class CpluginTemplate {
 
 
 
-  protected RegisterPrivateCommand(cmd: string, options?: TCommandOption): string {
+  public RegisterPrivateCommand(cmd: string, options?: TCommandOption): string {
     let isRegexp = false;
     try {
       isRegexp = !!(new RegExp(cmd))
@@ -390,6 +418,24 @@ class CpluginTemplate {
     SortRegisterCommandMap(true);
     return registerStruc.event_id;
   }
+
+  public BindMessageOnce<T extends 'message.group' | 'message.private'>(event: T, target_id: number, listener: icqq.EventMap[T]) {
+    let disponse: () => boolean | void;
+    const client = this._router.cl;
+
+    const bindListener: icqq.EventMap[T] = (messageEvent: never) => {
+      const sender_id = _.get(messageEvent, 'sender.user_id') || _.get(messageEvent, 'from_id');
+      if (sender_id !== target_id)
+        disponse = client.once(event, bindListener);
+
+      return (<icqq.EventMap[T]>listener)(messageEvent);
+    };
+
+    disponse = client.once(event, bindListener);
+    return disponse;
+  }
+
+
 
   private DefaultCommandOption(option?: TCommandOption): TCommandOption {
     return {

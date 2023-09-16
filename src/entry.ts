@@ -1,5 +1,3 @@
-import '@base/types';
-
 import logger from '@module/logger';
 
 import { jsonc } from 'jsonc';

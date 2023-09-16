@@ -2,6 +2,7 @@
 /build/
 /logs/
 
+/src/plugin/*
 /src/debug/
 test.*
 
