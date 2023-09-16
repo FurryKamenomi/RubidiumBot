@@ -6,13 +6,19 @@ export default class FuckNative extends pl.pluginTemplate {
   ) {
     super(reserved);
 
-    let eventID = this.RegisterCommand('ping', 0);
+    let eventID = this.RegisterGroupCommand('ping');
 
     this._router.on(eventID, (proto) => {
       proto.reply('Pong. ');
     });
 
-    eventID = this.RegisterCommand('time', 0);
+    eventID = this.RegisterGroupCommand('time');
+    
+    this._router.on(eventID, (proto) => {
+      proto.reply((new Date).toLocaleString('zh-CN'));
+    });
+
+    eventID = this.RegisterPrivateCommand('time');
     
     this._router.on(eventID, (proto) => {
       proto.reply((new Date).toLocaleString('zh-CN'));

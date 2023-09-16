@@ -1,52 +1,60 @@
 /* eslint-disable @typescript-eslint/no-unsafe-declaration-merging */
 
-import client from '@base/client';
+import cl, { TBotRank } from '@base/client';
+import cm from '@module/common';
+import ch from '@module/configHelper';
+
 import icqq from 'icqq';
+import { jce, pb } from 'icqq/lib/core';
+import _ from 'lodash';
+
 import events from 'node:events';
 import fs from 'node:fs';
 
-import { jce, pb } from 'icqq/lib/core';
-import _ from 'lodash';
-import ch from '@module/configHelper';
 
-
-
-interface CpluginRouter {
-  on(event: 'group.command.request', callback: (prototype: icqq.GroupMessageEvent, command: string, argument?: unknown[]) => void): this
-  on(event: 'group.self.nickname', callback: (val: { event_id: number, group_id: number, user_id: number, new_nickname: string }) => void): this;
-  on(event: string, callback: (prototype: icqq.GroupMessageEvent, argument?: unknown[]) => void): this
-}
-
-type TPluginInfo = {
+export type TPluginInfomation = {
   handle: string,
   status?: boolean,
   classObj: unknown
 }
 
-type TPluginCommandInfo = {
-  command: string, // Support regexp.
-  isRegexp: boolean,
-  event_id: string,
-  type: 'group',
-  level: number
-}
 
-
-
-const _pluginMap = new Map<string, TPluginInfo>;
+const _pluginMap = new Map<string, TPluginInfomation>;
 
 /**
- * Map.
+ * Group command Map.
  * @param string pluginHandle.
  * @param TPluginCommandInfo registered command info.
  */
-const _registerCommandMap = new Map<string, TPluginCommandInfo>;
+const _groupCommandMap = new Map<string, TCommandInfomation<'group'>>;
+
+/**
+ * Private command Map.
+ * @param string pluginHandle.
+ * @param TPluginCommandInfo registered command info.
+ */
+const _privateCommandMap = new Map<string, TCommandInfomation<'private'>>;
 
 
+// --- --- --- --- --- --- ---
+/**
+ *     Register Plugin In Common(Router).
+ */
+
+
+interface CpluginRouter {
+  on(event: 'group.command.request', callback: (prototype: icqq.GroupMessageEvent, command: string, argument?: unknown[]) => void): this
+  on(event: 'private.command.request', callback: (prototype: icqq.PrivateMessageEvent, command: string, argument?: unknown[]) => void): this
+
+  on(event: 'group.self.nickname', callback: (val: { event_id: number, group_id: number, user_id: number, new_nickname: string }) => void): this;
+  on(event: string, callback: (prototype: icqq.GroupMessageEvent, argument?: unknown[]) => void): this
+}
 
 class CpluginRouter extends events.EventEmitter {
-  private _client = client.instance;
-  private _detectFormat = /\/[\u4e00-\u9fa5_a-zA-Z0-9]+@/;
+  private _client = cl.instance;
+  private _detectGroup = /\/[\u4e00-\u9fa5_a-zA-Z0-9]+@/;
+  private _detectPrivate = /\/[\u4e00-\u9fa5_a-zA-Z0-9]+#/;
+
 
   public constructor() {
     super({
@@ -58,7 +66,9 @@ class CpluginRouter extends events.EventEmitter {
 
 
 
-  get pm() { return <Readonly<typeof _pluginMap>>_pluginMap }
+  get pm() {
+    return <Readonly<typeof _pluginMap>>_pluginMap
+  }
 
 
 
@@ -72,31 +82,78 @@ class CpluginRouter extends events.EventEmitter {
 
     this._client
       .on('internal.sso', this.SSOExtraEvent.bind(this))
-      .on('message.group', async messageEvent => {
-        if (!await this.CheckRequest(messageEvent.raw_message, messageEvent.group))
-          return;
-
-        const raw = messageEvent.raw_message;
-        const nickname = messageEvent.group.pickMember(this._client.uin).card || this._client.nickname;
-        const command = raw.slice(1, raw.indexOf('@'));
-        const argument = raw.split('@').slice(1).join('@').slice(nickname.length).split(' ');
-        this.emit('group.command.request', messageEvent, command, argument);
-
-        [..._registerCommandMap.values()].forEach(val => {
-          if (val.isRegexp) {
-            if (!(new RegExp(val.command)).test(command))
-              return
-          }
-
-          if (val.command !== command)
-            return;
-
-          this.emit(val.event_id, messageEvent, argument);
-        })
-      });
+      .on('message.group', this.GroupCommandProcessor.bind(this))
+      .on('message.private', this.PrivateCommandProcessor.bind(this));
 
     this.LoadAllPlugin();
   }
+
+
+
+
+  private async GroupCommandProcessor(messageEvent: icqq.GroupMessageEvent) {
+    if (!await this.CheckRequest(messageEvent.raw_message, messageEvent.group))
+      return;
+
+    const raw = messageEvent.raw_message;
+    const nickname = messageEvent.group.pickMember(this._client.uin).card || this._client.nickname;
+    const command = raw.slice(1, raw.indexOf('@'));
+    const argument = raw.split('@').slice(1).join('@').slice(nickname.length).split(' ');
+    this.emit('group.command.request', messageEvent, command, argument);
+
+    [..._groupCommandMap.values()].forEach(val => {
+      const { group_id, sender } = messageEvent;
+      const { event_id, command: cmd, isRegexp, allow_ids, rank } = val;
+
+      if (allow_ids && !allow_ids.includes(group_id))
+        return;
+
+      if (cl.whoIs(sender.user_id) !== rank)
+        return;
+
+      if (isRegexp) {
+        if (!(new RegExp(cmd)).test(command))
+          return
+      }
+
+      if (cmd !== command)
+        return;
+
+      this.emit(event_id, messageEvent, argument);
+    });
+  }
+
+  private async PrivateCommandProcessor(messageEvent: icqq.PrivateMessageEvent) {
+    if (!await this.CheckRequest(messageEvent.raw_message))
+      return;
+
+    const raw = messageEvent.raw_message;
+    const command = raw.slice(1, raw.indexOf('#'));
+    const argument = raw.split('#').slice(1).join('#').split(' ');
+    this.emit('private.command.request', messageEvent, command, argument);
+
+    [..._privateCommandMap.values()].forEach(val => {
+      const { user_id } = messageEvent.sender;
+      const { event_id, command: cmd, isRegexp, allow_ids, rank } = val;
+
+      if (allow_ids.length !== 0 && !allow_ids.includes(user_id))
+        return
+
+      if (cl.whoIs(user_id) !== rank)
+        return;
+
+      if (isRegexp && !(new RegExp(cmd)).test(command)) {
+        return
+      }
+
+      if (cmd !== command)
+        return;
+
+      this.emit(event_id, messageEvent, argument);
+    });
+  }
+
+
 
 
 
@@ -151,12 +208,16 @@ class CpluginRouter extends events.EventEmitter {
 
 
 
-  private async CheckRequest(text: string, group: icqq.Group) {
-    const matchState = text.match(this._detectFormat)?.[0];
+  private async CheckRequest(text: string, group?: icqq.Group) {
+    if (!group) {
+      return !!text.match(this._detectPrivate)?.[0];
+    }
+    const matchState = text.match(this._detectGroup)?.[0];
     const targetNickname = text.split('@')[1]?.split(' ')[0];
 
     if (!matchState || text.indexOf(matchState || '') !== 0)
       return false;
+
 
     const groupNickname = group.pickMember(this._client.uin).card || this._client.nickname;
 
@@ -172,7 +233,7 @@ class CpluginRouter extends events.EventEmitter {
     try {
       files = fs.readdirSync(basePath, { encoding: 'utf-8' })
     } catch {
-      client.clientLogger.Error(`Missing ${basePath} Direct! `);
+      cl.clientLogger.Error(`Missing ${basePath} Direct! `);
       return;
     }
 
@@ -191,28 +252,38 @@ class CpluginRouter extends events.EventEmitter {
 
         new object.default;
       } catch (err) {
-        client.clientLogger.Error(`${file} Load Fail. \n${err}`);
+        cl.clientLogger.Error(`${file} Load Fail. \n${err}`);
         return;
       }
 
       _pluginMap.set(file, {
-        handle: _.uniqueId('plugin_'),
+        handle: cm.Md5(_.uniqueId('plugin_')),
         classObj: object
       });
 
       if (_pluginMap.has(file))
-        client.clientLogger.Info(`Load ${file} Success. `);
+        cl.clientLogger.Info(`Load ${file} Success. `);
     });
   }
 }
 
-function SortRegisterCommandMap() {
-  const arrayMap = Array
-    .from(_registerCommandMap)
-    .sort((a, b) => a[1].level - b[1].level);
-  _registerCommandMap.clear();
+function SortRegisterCommandMap(isPrivate: boolean = false) {
+  if (isPrivate) {
+    const arrayMap = Array
+      .from(_privateCommandMap)
+      .sort((a, b) => a[1].level - b[1].level);
+    _privateCommandMap.clear();
 
-  arrayMap.forEach(val => { _registerCommandMap.set(val[0], val[1]) });
+    arrayMap.forEach(val => { _privateCommandMap.set(val[0], val[1]) });
+
+    return;
+  }
+  const arrayMap = Array
+    .from(_groupCommandMap)
+    .sort((a, b) => a[1].level - b[1].level);
+  _groupCommandMap.clear();
+
+  arrayMap.forEach(val => { _groupCommandMap.set(val[0], val[1]) });
 }
 
 
@@ -220,15 +291,31 @@ function SortRegisterCommandMap() {
 const pluginRouter = new CpluginRouter;
 
 
+
+
+
 // --- --- --- --- --- --- ---
+/**
+ *     Register Command In Template.
+ */
 
-// interface IpluginCommandInfo {
-//   cmd: string,
-//   procFuncName: string,
-//   level: number,
 
-//   description?: string
-// }
+export type TCommandOption = {
+  rank?: TBotRank,
+  level?: number,
+  allow_ids?: number[],
+}
+
+export type TCommandInfomation<T extends 'group' | 'private'> = {
+  command: string, // Support regexp.
+  isRegexp: boolean,
+  event_id: string,
+  rank: TBotRank,
+  type: T,
+  level: number
+  allow_ids: number[] // Group_id or User_id.
+}
+
 
 /**
  * @class
@@ -256,35 +343,61 @@ class CpluginTemplate {
     }
   }
 
-  // protected RegisterCommand(data: IpluginCommandInfo): string
-  protected RegisterCommand(command: string, level?: number): string
-  protected RegisterCommand(cmd: string /*| IpluginCommandInfo*/, level: number = 0): string | undefined {
-    if (typeof cmd === 'string') {
-      let isRegexp = false;
-      try {
-        isRegexp = !!(new RegExp(cmd))
-      } catch { /* It is not. */ }
 
-      const registerStruc: TPluginCommandInfo = {
-        command: cmd,
-        isRegexp,
-        event_id: `${this.__HANDLE__}.group.${isRegexp ? _.uniqueId() : cmd}`,
-        type: 'group',
-        level
-      }
 
-      _registerCommandMap.set(this.__HANDLE__, registerStruc);
+  protected RegisterGroupCommand(cmd: string, options?: TCommandOption): string {
+    let isRegexp = false;
+    try {
+      isRegexp = !!(new RegExp(cmd))
+    } catch { /* It is not. */ }
 
-      SortRegisterCommandMap();
-      return registerStruc.event_id;
+    options = this.DefaultCommandOption(options);
+
+    const registerStruc: TCommandInfomation<'group'> = {
+      command: cmd,
+      isRegexp,
+      event_id: `${this.__HANDLE__}.group.${isRegexp ? _.uniqueId() : cmd}`,
+      type: 'group',
+      ...<Required<TCommandOption>>options
     }
 
-    if (typeof cmd !== 'object')
-      return;
+    _groupCommandMap.set(this.__HANDLE__, registerStruc);
 
-    // and Todo so.
+    SortRegisterCommandMap();
+    return registerStruc.event_id;
+  }
 
-    return;
+
+
+  protected RegisterPrivateCommand(cmd: string, options?: TCommandOption): string {
+    let isRegexp = false;
+    try {
+      isRegexp = !!(new RegExp(cmd))
+    } catch { /* It is not. */ }
+
+    options = this.DefaultCommandOption(options);
+
+    const registerStruc: TCommandInfomation<'private'> = {
+      command: cmd,
+      isRegexp,
+      event_id: `${this.__HANDLE__}.private.${isRegexp ? _.uniqueId() : cmd}`,
+      type: 'private',
+      ...<Required<TCommandOption>>options
+    }
+
+    _privateCommandMap.set(this.__HANDLE__, registerStruc);
+
+    SortRegisterCommandMap(true);
+    return registerStruc.event_id;
+  }
+
+  private DefaultCommandOption(option?: TCommandOption): TCommandOption {
+    return {
+      rank: 'user',
+      level: 32767,
+      allow_ids: new Array<number>,
+      ...option
+    }
   }
 }
 

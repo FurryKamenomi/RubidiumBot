@@ -1,10 +1,18 @@
-import fs from 'node:fs'
-import _ from 'lodash';
+import '@base/types';
+
 import logger from '@module/logger';
+
 import { jsonc } from 'jsonc';
+import _ from 'lodash';
+
+import fs from 'node:fs';
 
 
-interface IAccount {
+export interface IEnvArguments {
+  env: 'dev' | 'prod'
+}
+
+export interface IAccountConfig {
   account: number,
   password: string,
   alwaysLogin: boolean,
@@ -12,55 +20,64 @@ interface IAccount {
   signApi: string
 }
 
-interface INativeArgv {
-  env: 'dev' | 'prod'
+export interface IBotConfig {
+  owner: number,
+  admin: Array<number>
 }
 
-let nativeArgv: INativeArgv = <never>{};
-const nativeLogger = logger.Init(undefined, 'Rubidium');
-const config: {
-  account: IAccount
-} = {
-  account: <never>{}
+export interface IConfig {
+  account: IAccountConfig,
+  bot: IBotConfig
+}
+
+
+let processArgv: IEnvArguments = <never>{};
+const processLogger = logger.Init(undefined, 'Rubidium');
+const config: IConfig = {
+  account: <never>{},
+  bot: <never>{}
 };
 
-(function __process_entry__() {
-  nativeLogger.Info('Process running. ');
 
+processLogger.Info('Process running. ');
+
+config.account = LoadConfig('/configs/account.jsonc');
+config.bot = LoadConfig('/configs/bot.jsonc');
+
+let procArgv = process.argv;
+
+if (procArgv.indexOf('--') !== -1) {
+  procArgv = procArgv.slice(procArgv.indexOf('--') + 1);
+
+  procArgv.forEach(val => {
+    const item = val.split(':');
+    if (item.length === 1)
+      (<never>processArgv)[val] = <never>undefined;
+    else
+      (<never>processArgv)[item[0]] = <never>item[1];
+  });
+}
+
+CompleteArgv();
+
+
+
+function LoadConfig<T>(path: string) {
   try {
-    config.account = <IAccount>
+    return <T>
       jsonc.parse(
         fs.readFileSync(
-          process.cwd() + '/configs/account.jsonc'
+          process.cwd() + path
         ).toString('utf-8')
       );
   } catch (e) {
-    nativeLogger.Fatal('Load ./configs/account.jsonc fail. ');
+    processLogger.Fatal(`Load .${path} fail. `);
     process.exit(1);
   }
-
-  // it isn't a array.
-  // config.account.platform--;
-
-  let procArgv = process.argv;
-
-  if (procArgv.indexOf('--') !== -1) {
-    procArgv = procArgv.slice(procArgv.indexOf('--') + 1);
-
-    procArgv.forEach(val => {
-      const item = val.split(':');
-      if (item.length === 1)
-        (<never>nativeArgv)[val] = <never>undefined;
-      else
-        (<never>nativeArgv)[item[0]] = <never>item[1];
-    });
-  }
-
-  CompleteArgv();
-})();
+}
 
 function CompleteArgv() {
-  nativeArgv = ObjectKeyDefault(nativeArgv, 'env', 'dev', 'String');
+  processArgv = ObjectKeyDefault(processArgv, 'env', 'dev', 'String');
 }
 
 function ObjectKeyDefault(
@@ -71,13 +88,12 @@ function ObjectKeyDefault(
 ): never {
   let val = _.get(origin, key);
 
-  if (_.has(origin, key)) return <never>origin;
+  if (_.has(origin, key))
+    return <never>origin;
 
   if (typeof val !== defaultType.toLowerCase()) {
     try {
       val = _.get(global, defaultType, String)!(val);
-    } catch (error) {
-      // 错误处理，如果转换失败则保留原值
     } finally {
       _.set(origin, key, val);
     }
@@ -89,12 +105,12 @@ function ObjectKeyDefault(
   return <never>origin;
 }
 
-nativeLogger.Debug('Currrent arguments', nativeArgv);
+processLogger.Debug('Currrent arguments', processArgv);
 
 export default {
   config,
-  nativeArgv,
-  nativeLogger
+  processArgv,
+  processLogger
 }
 
 import '@base/client';
