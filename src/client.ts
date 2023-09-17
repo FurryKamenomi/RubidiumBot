@@ -4,7 +4,11 @@ import icqq from 'icqq';
 import pngjs from 'pngjs';
 import readline from 'node:readline';
 
-
+export enum EBotRank {
+  owner = 3,
+  admin = 2,
+  user = 1
+}
 
 export type TBotRank = 'owner' | 'admin' | 'user';
 

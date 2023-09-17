@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-declaration-merging */
 
-import cl, { TBotRank } from '@base/client';
+import cl, { EBotRank, TBotRank } from '@base/client';
 import cm from '@module/common';
 import ch from '@module/configHelper';
 
@@ -102,17 +102,18 @@ class CpluginRouter extends events.EventEmitter {
     const raw = messageEvent.raw_message;
     const nickname = messageEvent.group.pickMember(this._client.uin).card || this._client.nickname;
     const command = raw.slice(1, raw.indexOf('@'));
-    const argument = raw.split('@').slice(1).join('@').slice(nickname.length).split(' ');
+    const argument = _.without(raw.split('@').slice(1).join('@').slice(nickname.length).split(' '), '');
     this.emit('group.command.request', messageEvent, command, argument);
+
 
     [..._groupCommandMap.values()].forEach(val => {
       const { group_id, sender } = messageEvent;
       const { event_id, command: cmd, isRegexp, allow_ids, rank } = val;
 
-      if (allow_ids && !allow_ids.includes(group_id))
+      if (allow_ids.length !== 0 && !allow_ids.includes(group_id))
         return;
 
-      if (cl.whoIs(sender.user_id) !== rank)
+      if (EBotRank[cl.whoIs(sender.user_id)] < EBotRank[rank])
         return;
 
       if (isRegexp) {
@@ -133,8 +134,9 @@ class CpluginRouter extends events.EventEmitter {
 
     const raw = messageEvent.raw_message;
     const command = raw.slice(1, raw.indexOf('#'));
-    const argument = raw.split('#').slice(1).join('#').split(' ');
+    const argument = _.without(raw.split('#').slice(1).join('#').split(' '), '');
     this.emit('private.command.request', messageEvent, command, argument);
+
 
     [..._privateCommandMap.values()].forEach(val => {
       const { user_id } = messageEvent.sender;
@@ -143,7 +145,7 @@ class CpluginRouter extends events.EventEmitter {
       if (allow_ids.length !== 0 && !allow_ids.includes(user_id))
         return
 
-      if (cl.whoIs(user_id) !== rank)
+      if (EBotRank[cl.whoIs(user_id)] < EBotRank[rank])
         return;
 
       if (isRegexp && !(new RegExp(cmd)).test(command)) {
@@ -374,11 +376,8 @@ class CpluginTemplate {
 
 
   public RegisterGroupCommand(cmd: string, options?: TCommandOption): string {
-    let isRegexp = false;
-    try {
-      isRegexp = !!(new RegExp(cmd))
-    } catch { /* It is not. */ }
-
+    const isRegexp = (new RegExp(cmd)).toString() === '/(?:)/';
+    
     options = this.DefaultCommandOption(options);
 
     const registerStruc: TCommandInfomation<'group'> = {
@@ -389,8 +388,9 @@ class CpluginTemplate {
       ...<Required<TCommandOption>>options
     }
 
-    _groupCommandMap.set(this.__HANDLE__, registerStruc);
+    _groupCommandMap.set(_.uniqueId(this.__HANDLE__), registerStruc);
 
+    cl.clientLogger.Debug(`Register`, registerStruc.event_id);
     SortRegisterCommandMap();
     return registerStruc.event_id;
   }
@@ -413,9 +413,10 @@ class CpluginTemplate {
       ...<Required<TCommandOption>>options
     }
 
-    _privateCommandMap.set(this.__HANDLE__, registerStruc);
+    _privateCommandMap.set(_.uniqueId(this.__HANDLE__), registerStruc);
 
     SortRegisterCommandMap(true);
+    cl.clientLogger.Debug(`Register`, registerStruc.event_id);
     return registerStruc.event_id;
   }
 
